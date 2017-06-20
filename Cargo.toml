@@ -1,0 +1,13 @@
+[package]
+name = "rgettext"
+version = "0.1.0"
+authors = ["iovxw <iovxw@outlook.com>"]
+
+[lib]
+plugin = true
+
+[dependencies]
+lazy_static = "0.2"
+
+[dev-dependencies]
+gettext-rs = "0.3"
