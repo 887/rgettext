@@ -4,13 +4,13 @@
 extern crate gettextrs;
 
 #[test]
-fn base() {
+fn g() {
     textdomain!("gettext");
-    g!();
+    g!("");
 }
 
 #[test]
-fn base2() {
+fn ng() {
     textdomain!("gettext");
-    g!();
+    ng!("one", "two", 1);
 }
