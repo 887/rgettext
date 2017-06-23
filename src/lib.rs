@@ -202,6 +202,21 @@ fn parse<'a>(
 
     let mut parser = cx.new_parser_from_tts(args);
 
+    if parser.token == Token::Eof {
+        let n = match target {
+            G => 1,
+            Ng | Dcg => 3,
+            Dg => 2,
+            Dng => 4,
+            Dcng => 5,
+        };
+        let m = format!("this macro takes {} or {} parameter\
+                         but {} parameters were supplied", n, n + 1, 0);
+        let mut e = cx.struct_span_err(sp, &m);
+        e.span_label(sp, format!("expected {} or {} parameter", n, n + 1));
+        return Err(e);
+    }
+
     let domain = match target {
         Dg | Dng | Dcg | Dcng => {
             let r = parser.parse_str()?.0.as_str().to_string();
