@@ -27,7 +27,6 @@ use rustc::lint::{LintPass, LintArray, LateLintPass, LateContext};
 
 #[plugin_registrar]
 pub fn plugin_registrar(reg: &mut Registry) {
-    reg.register_macro("textdomain", expand_textdomain);
     reg.register_macro("g", expand_g);
     reg.register_macro("ng", expand_ng);
     reg.register_macro("dg", expand_dg);
@@ -185,7 +184,7 @@ enum GettextFn {
 }
 
 struct GettextArgs {
-    domain: Option<String>,
+    domain: Option<P<Expr>>,
     singular: String,
     plural: Option<String>,
     n: Option<P<Expr>>,
@@ -219,16 +218,11 @@ fn parse<'a>(
 
     let domain = match target {
         Dg | Dng | Dcg | Dcng => {
-            let r = parser.parse_str()?.0.as_str().to_string();
+            let r = parser.parse_expr()?;
             parser.expect(&Token::Comma)?;
             Some(r)
         }
-        G | Ng => {
-            if TEXTDOMAIN.read().unwrap().is_none() {
-                return Err(cx.struct_span_err(sp, "must call textdomain first!"));
-            }
-            TEXTDOMAIN.read().unwrap().clone()
-        }
+        _ => None,
     };
     let msgid = parser.parse_str()?.0.as_str().to_string();
     parser.expect_one_of(&[Token::Comma, Token::Eof], &[])?;
@@ -289,18 +283,4 @@ fn parse<'a>(
         n: n,
         category: category,
     })
-}
-
-fn expand_textdomain(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree]) -> Box<MacResult + 'static> {
-    let mut parser = cx.new_parser_from_tts(args);
-    let item_name = emittry!(parser.parse_str(), sp).0.as_str();
-    if parser.token != Token::Eof {
-        emittry!(parser.unexpected(), sp);
-    }
-    *TEXTDOMAIN.write().unwrap() = Some(item_name.to_string());
-
-    let e = quote_expr!(cx, {
-        ::gettextrs::textdomain($item_name);
-    });
-    MacEager::expr(e)
 }

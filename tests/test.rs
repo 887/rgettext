@@ -4,13 +4,11 @@
 extern crate gettextrs;
 
 #[test]
-fn g() {
-    textdomain!("gettext");
-    g!("");
-}
-
-#[test]
-fn ng() {
-    textdomain!("gettext");
+fn base() {
+    g!("text");
     ng!("one", "two", 1);
+    dg!("domain", "text");
+    dng!("domain", "one", "two", 1);
+    dcg!("domain", "text", gettextrs::LocaleCategory::LcAll);
+    dcng!("domain", "one", "two", 1, gettextrs::LocaleCategory::LcAll);
 }
