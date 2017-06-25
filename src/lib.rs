@@ -87,7 +87,18 @@ impl LintPass for FakeLint {
 }
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for FakeLint {
-    fn check_crate(&mut self, _cx: &LateContext<'a, 'tcx>, _krate: &'tcx Crate) {
+    fn check_crate(&mut self, _cx: &LateContext<'a, 'tcx>, krate: &'tcx Crate) {
+        let mut is_bin_crate = false;
+        for (_id, item) in &krate.items {
+            for attr in &item.attrs {
+                if attr.path.to_string() == "main" {
+                    is_bin_crate = true;
+                }
+            }
+        }
+        if !is_bin_crate {
+            return; // Do not create .pot for a library
+        }
         println!("textdomain: {}", &*TEXTDOMAIN.read().unwrap());
         println!("result: {:?}", POT.read().unwrap());
     }
