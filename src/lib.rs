@@ -49,7 +49,7 @@ macro_rules! emittry {
 }
 
 lazy_static! {
-    static ref TEXTDOMAIN: RwLock<Option<String>> = RwLock::new(None);
+    static ref TEXTDOMAIN: RwLock<String> = RwLock::new(std::env::var("CARGO_PKG_NAME").unwrap());
     static ref POT: RwLock<Vec<Msg>> = RwLock::new(Vec::new());
 }
 
@@ -88,6 +88,7 @@ impl LintPass for FakeLint {
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for FakeLint {
     fn check_crate(&mut self, _cx: &LateContext<'a, 'tcx>, _krate: &'tcx Crate) {
+        println!("textdomain: {}", &*TEXTDOMAIN.read().unwrap());
         println!("result: {:?}", POT.read().unwrap());
     }
 }
