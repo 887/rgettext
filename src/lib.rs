@@ -174,6 +174,7 @@ fn expand_dcng(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree]) -> Box<MacResult 
     }))
 }
 
+#[derive(Clone, Copy)]
 enum GettextFn {
     G,
     Ng,
