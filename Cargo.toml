@@ -8,6 +8,7 @@ plugin = true
 
 [dependencies]
 lazy_static = "0.2"
+chrono = "0.4"
 
 [dev-dependencies]
 gettext-rs = "0.3"

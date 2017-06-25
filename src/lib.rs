@@ -11,8 +11,13 @@ extern crate rustc_errors;
 
 #[macro_use]
 extern crate lazy_static;
+extern crate chrono;
 
 use std::sync::RwLock;
+use std::fs::{create_dir, File};
+use std::path::Path;
+use std::env;
+use std::io::prelude::*;
 
 use syntax::tokenstream::TokenTree;
 use syntax::ext::base::{ExtCtxt, MacEager, MacResult, DummyResult};
@@ -24,6 +29,8 @@ use rustc_errors::DiagnosticBuilder;
 use rustc_plugin::Registry;
 use rustc::hir::Crate;
 use rustc::lint::{LintPass, LintArray, LateLintPass, LateContext};
+
+mod po;
 
 #[plugin_registrar]
 pub fn plugin_registrar(reg: &mut Registry) {
@@ -48,28 +55,30 @@ macro_rules! emittry {
     }
 }
 
+static POT_DEFAULT: &str = r#"# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PACKAGE VERSION\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+"#;
+
 lazy_static! {
-    static ref TEXTDOMAIN: RwLock<String> = RwLock::new(std::env::var("CARGO_PKG_NAME").unwrap());
-    static ref POT: RwLock<Vec<Msg>> = RwLock::new(Vec::new());
-}
-
-#[derive(Debug)]
-struct Reference {
-    file: String,
-    line: usize,
-}
-
-#[derive(Debug)]
-struct Msg {
-    translator_comments: Vec<String>, // #
-    extracted_comments: Vec<String>, // #.
-    reference: Vec<Reference>, // #:
-    flag: Vec<String>, // #,
-    previous: Vec<String>, // #|
-    msgctxt: Option<String>,
-    msgid: String,
-    msgid_plural: Option<String>,
-    msgstr: Vec<String>,
+    static ref TEXTDOMAIN: RwLock<String> = RwLock::new(env::var("CARGO_PKG_NAME").unwrap());
+    static ref POT: RwLock<Vec<po::Msg>> = RwLock::new(Vec::new());
 }
 
 declare_lint! {
@@ -88,17 +97,27 @@ impl LintPass for FakeLint {
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for FakeLint {
     fn check_crate(&mut self, _cx: &LateContext<'a, 'tcx>, krate: &'tcx Crate) {
-        let mut is_bin_crate = false;
-        for (_id, item) in &krate.items {
-            for attr in &item.attrs {
-                if attr.path.to_string() == "main" {
-                    is_bin_crate = true;
-                }
-            }
-        }
+        let is_bin_crate = krate.items.iter().any(|(_id, item)| {
+            item.attrs
+                .iter()
+                .any(|attr| attr.path.to_string() == "main")
+        });
         if !is_bin_crate {
             return; // Do not create .pot for a library
         }
+        let dir = format!("{}/{}", env::var("CARGO_MANIFEST_DIR").unwrap(), "i18n");
+        if !Path::new(&dir).exists() {
+            create_dir(&dir).unwrap();
+        }
+        let pot = format!("{}/{}.pot", &dir, &*TEXTDOMAIN.read().unwrap());
+        let pot_path = Path::new(&pot);
+        if !pot_path.exists() {
+            let mut file = File::create(&pot_path).unwrap();
+            file.write(POT_DEFAULT.as_bytes()).unwrap();
+        }
+        let date = chrono::Local::now().format("%F %R%z").to_string();
+        // TODO: Parse and update .pot file
+
         println!("textdomain: {}", &*TEXTDOMAIN.read().unwrap());
         println!("result: {:?}", POT.read().unwrap());
     }
@@ -268,11 +287,11 @@ fn parse<'a>(
     }
 
     let fl = cx.codemap().span_to_lines(sp).unwrap();
-    let refence = Reference {
+    let refence = po::Reference {
         file: fl.file.name.to_owned(),
         line: fl.lines.first().unwrap().line_index,
     };
-    let msg = Msg {
+    let msg = po::Msg {
         translator_comments: Vec::new(),
         extracted_comments: Vec::new(),
         reference: vec![refence],
