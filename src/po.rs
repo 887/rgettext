@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
-use std::io::prelude::*;
-use std::io::{self, BufReader};
-use std::fs::File;
 use std::mem;
+
+use nom::{digit, space};
 
 #[derive(Debug, Default)]
 pub struct Reference {
@@ -20,23 +19,60 @@ pub struct Msg {
     pub msgctxt: Option<String>,
     pub msgid: String,
     pub msgid_plural: Option<String>,
-    pub msgstr: Vec<String>,
+    pub msgstr: BTreeMap<usize, String>,
 }
 
-pub fn parse(path: &str) -> io::Result<BTreeMap<String, Msg>> {
-    let file = File::open(path)?;
+named!(index<usize>, map_res!(
+    map_res!(
+        digit,
+        ::std::str::from_utf8
+    ),
+    ::std::str::FromStr::from_str
+));
+
+named!(esc<String>, map_res!(
+    escaped_transform!(alt!(tag!("\\\"") | is_not!("\"")), '\\',
+                       alt!(
+                           tag!("\\")   => { |_| &b"\\"[..] }
+                           | tag!("\"") => { |_| &b"\""[..] }
+                           | tag!("n")  => { |_| &b"\n"[..] }
+                       )),
+    String::from_utf8));
+
+named!(parse_string<String>, do_parse!(
+    many0!(space)
+        >> s: delimited!(tag!("\""), opt!(esc), tag!("\""))
+        >> many0!(space)
+        >> (s.unwrap_or_default())
+));
+
+named!(msgstr<MsgType>, do_parse!(
+    tag!("msgstr")
+        >> n: opt!(delimited!(tag!("["), index, tag!("]")))
+        >> (MsgType::Msgstr(n.unwrap_or(0)))
+));
+
+named!(msgctxt<MsgType>, do_parse!(tag!("msgctxt") >> (MsgType::Msgctxt)));
+named!(msgid<MsgType>, do_parse!(tag!("msgid") >> (MsgType::Msgid)));
+named!(msgid_plural<MsgType>, do_parse!(tag!("msgid_plural") >> (MsgType::MsgidPlural)));
+
+named!(parse_msg_type<MsgType>, alt!(msgstr | msgctxt | msgid | msgid_plural));
+
+pub fn parse(s: &str) -> Result<BTreeMap<String, Msg>, ParseError> {
     let mut result = BTreeMap::new();
     let mut tmp = Msg::default();
     let mut tmp_is_complete = false;
-    let mut multi_line: Option<u8> = None;
-    for (n, line) in BufReader::new(file).lines().enumerate() {
-        let line = line?;
+    let mut multi_line: Option<MsgType> = None;
+    let mut had_msgid = false;
+    for (n, line) in s.lines().enumerate() {
+        let n = n + 1;
         if line.is_empty() {
             if !tmp_is_complete {
-                return Err(make_parse_err("unexpected empty line", path, n));
+                return Err(ParseError::new("unexpected empty line", n));
             }
             tmp_is_complete = false;
             multi_line = None;
+            had_msgid = false;
             let mut msg = Msg::default();
             mem::swap(&mut msg, &mut tmp);
             let id = msg.msgid.clone();
@@ -57,7 +93,7 @@ pub fn parse(path: &str) -> io::Result<BTreeMap<String, Msg>> {
                 }
                 "#:" => {
                     let s = line.trim_left_matches("#: ").to_owned();
-                    let mut v = parse_reference(&s).map_err(|e| make_parse_err(e, path, n))?;
+                    let mut v = parse_reference(&s).map_err(|e| ParseError::new(e, n))?;
                     tmp.reference.append(&mut v)
                 }
                 "#," => {
@@ -69,64 +105,80 @@ pub fn parse(path: &str) -> io::Result<BTreeMap<String, Msg>> {
                     tmp.previous.push(v)
                 }
                 x => {
-                    let e = make_parse_err(format!("illegal comment line `{}`", x), path, n);
+                    let e = ParseError::new(format!("illegal comment line `{}`", x), n);
                     return Err(e);
                 }
             }
-        } else if line.starts_with('"') && line.ends_with('"') && multi_line.is_some() {
+            continue;
+        }
+        if line.starts_with('"') && line.ends_with('"') && multi_line.is_some() {
+            use self::MsgType::*;
+            let s = parse_string(line.as_bytes())
+                .to_result()
+                .map_err(|e|{println!("{:?}", e); ParseError::new("illegal string", n)})?;
             match multi_line.unwrap() {
-                0 => tmp.msgctxt.as_mut().unwrap().push_str(&line),
-                1 => tmp.msgid.push_str(&line),
-                2 => tmp.msgid_plural.as_mut().unwrap().push_str(&line),
-                3 => tmp.msgstr.last_mut().unwrap().push_str(&line),
-                _ => unreachable!(),
+                Msgctxt => tmp.msgctxt.as_mut().unwrap().push_str(&s),
+                Msgid => tmp.msgid.push_str(&s),
+                MsgidPlural => tmp.msgid_plural.as_mut().unwrap().push_str(&s),
+                Msgstr(n) => tmp.msgstr.get_mut(&n).unwrap().push_str(&s),
             }
-        } else if line.starts_with("msg") {
-            let k = line.split_whitespace().next().unwrap();
-            match k {
-                "msgctxt" => {
-                    let ctxt = line.chars().skip(8).collect();
+            continue;
+        }
+        if let Some(MsgType::Msgid) = multi_line {
+            if result.contains_key(&tmp.msgid) {
+                let e = ParseError::new(format!("duplicate msgid `{}`", tmp.msgid), n - 1);
+                return Err(e);
+            }
+        }
+        if line.starts_with("msg") {
+            use self::MsgType::*;
+            let r = parse_msg_type(line.as_bytes());
+            if r.is_err() {
+                let e = ParseError::new("illegal field", n);
+                return Err(e);
+            }
+            let (next, t) = r.unwrap();
+            let s = parse_string(next)
+                .to_result()
+                .map_err(|_| ParseError::new("illegal string", n))?;
+            match t {
+                Msgctxt => {
                     if !tmp.msgctxt.is_none() {
-                        let e = make_parse_err("duplicate field `msgctxt`", path, n);
-                        return Err(e);
+                        return t.to_duplicate_err(n);
                     }
-                    tmp.msgctxt = Some(ctxt);
+                    tmp.msgctxt = Some(s);
+                    multi_line = Some(t);
                 }
-                "msgid" => {
-                    let id: String = line.chars().skip(6).collect();
-                    if result.contains_key(&id) {
-                        let e = make_parse_err(format!("duplicate msgid `{}`", &id), path, n);
-                        return Err(e);
+                Msgid => {
+                    if had_msgid {
+                        return t.to_duplicate_err(n);
                     }
-                    if !tmp.msgid.is_empty() {
-                        let e = make_parse_err("duplicate field `msgid`", path, n);
-                        return Err(e);
-                    }
-                    tmp.msgid.push_str(&id);
+                    had_msgid = true;
+                    tmp.msgid.push_str(&s);
+                    multi_line = Some(t);
                 }
-                "msgid_plural" => {
-                    let id_plural = line.chars().skip(13).collect();
+                MsgidPlural => {
                     if !tmp.msgid_plural.is_none() {
-                        let e = make_parse_err("duplicate field `msgid_plural`", path, n);
-                        return Err(e);
+                        return t.to_duplicate_err(n);
                     }
-                    tmp.msgid_plural = Some(id_plural);
+                    tmp.msgid_plural = Some(s);
+                    multi_line = Some(t);
                 }
-                _ if k.starts_with("msgstr") => {
-                    let iter = k.chars().skip(6);
-                }
-                _ => {
-                    let e = make_parse_err(format!("illegal field `{}`", k), path, n);
-                    return Err(e);
+                Msgstr(n) => {
+                    if tmp.msgstr.contains_key(&n) {
+                        return t.to_duplicate_err(n);
+                    }
+                    tmp.msgstr.insert(n, s);
+                    multi_line = Some(t);
                 }
             }
-            if !tmp_is_complete && !tmp.msgid.is_empty() && !tmp.msgstr.is_empty() {
+            if !tmp_is_complete && had_msgid && !tmp.msgstr.is_empty() {
                 tmp_is_complete = true;
             }
-        } else {
-            let e = make_parse_err("illegal line", path, n);
-            return Err(e);
+            continue;
         }
+        let e = ParseError::new("illegal line", n);
+        return Err(e);
     }
     Ok(result)
 }
@@ -150,11 +202,43 @@ fn parse_reference(s: &str) -> Result<Vec<Reference>, &'static str> {
         .collect()
 }
 
-fn make_parse_err<E: ::std::fmt::Display>(
-    error: E,
-    file_name: &str,
-    line_number: usize,
-) -> io::Error {
-    let m = format!("{} at {}:{}", error, file_name, line_number);
-    io::Error::new(io::ErrorKind::InvalidData, m)
+#[derive(Copy, Clone)]
+enum MsgType {
+    Msgctxt,
+    Msgid,
+    MsgidPlural,
+    Msgstr(usize),
+}
+
+impl MsgType {
+    fn to_duplicate_err<R>(&self, line: usize) -> Result<R, ParseError> {
+        Err(ParseError::new(format!("duplicate field `{}`", self), line))
+    }
+}
+
+impl ::std::fmt::Display for MsgType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> Result<(), ::std::fmt::Error> {
+        use self::MsgType::*;
+        match *self {
+            Msgctxt => write!(f, "msgctxt"),
+            Msgid => write!(f, "msgid"),
+            MsgidPlural => write!(f, "msgid_plural"),
+            Msgstr(n) => write!(f, "msgstr[{}]", n),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ParseError {
+    pub error: String,
+    pub line: usize,
+}
+
+impl ParseError {
+    fn new<E: Into<String>>(error: E, line: usize) -> ParseError {
+        ParseError {
+            error: error.into(),
+            line: line,
+        }
+    }
 }

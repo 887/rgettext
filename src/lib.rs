@@ -12,12 +12,15 @@ extern crate rustc_errors;
 #[macro_use]
 extern crate lazy_static;
 extern crate chrono;
+#[macro_use]
+extern crate nom;
 
 use std::sync::RwLock;
 use std::fs::{create_dir, File};
 use std::path::Path;
 use std::env;
 use std::io::prelude::*;
+use std::collections::BTreeMap;
 
 use syntax::tokenstream::TokenTree;
 use syntax::ext::base::{ExtCtxt, MacEager, MacResult, DummyResult};
@@ -300,7 +303,7 @@ fn parse<'a>(
         msgctxt: None,
         msgid: msgid.clone(),
         msgid_plural: msgid_plural.clone(),
-        msgstr: Vec::new(),
+        msgstr: BTreeMap::new(),
     };
     POT.write().unwrap().push(msg);
     println!(
