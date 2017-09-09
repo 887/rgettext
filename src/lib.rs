@@ -33,6 +33,8 @@ use rustc_plugin::Registry;
 use rustc::hir::Crate;
 use rustc::lint::{LintPass, LintArray, LateLintPass, LateContext};
 
+use chrono::prelude::*;
+
 mod po;
 
 #[plugin_registrar]
@@ -46,6 +48,7 @@ pub fn plugin_registrar(reg: &mut Registry) {
     reg.register_late_lint_pass(Box::new(FakeLint));
 }
 
+/// `try!` for plugin macro
 macro_rules! emittry {
     ($e: expr, $sp: expr) => {
         match $e {
@@ -58,30 +61,9 @@ macro_rules! emittry {
     }
 }
 
-static POT_DEFAULT: &str = r#"# SOME DESCRIPTIVE TITLE.
-# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
-# This file is distributed under the same license as the PACKAGE package.
-# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
-#
-#, fuzzy
-msgid ""
-msgstr ""
-"Project-Id-Version: PACKAGE VERSION\n"
-"Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
-"Language-Team: LANGUAGE <LL@li.org>\n"
-"Language: \n"
-"MIME-Version: 1.0\n"
-"Content-Type: text/plain; charset=UTF-8\n"
-"Content-Transfer-Encoding: 8bit\n"
-
-"#;
-
 lazy_static! {
     static ref TEXTDOMAIN: RwLock<String> = RwLock::new(env::var("CARGO_PKG_NAME").unwrap());
-    static ref POT: RwLock<Vec<po::Msg>> = RwLock::new(Vec::new());
+    static ref POT_BUF: RwLock<Vec<po::Msg>> = RwLock::new(Vec::new());
 }
 
 declare_lint! {
@@ -101,9 +83,9 @@ impl LintPass for FakeLint {
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for FakeLint {
     fn check_crate(&mut self, _cx: &LateContext<'a, 'tcx>, krate: &'tcx Crate) {
         let is_bin_crate = krate.items.iter().any(|(_id, item)| {
-            item.attrs
-                .iter()
-                .any(|attr| attr.path.to_string() == "main")
+            item.attrs.iter().any(
+                |attr| attr.path.to_string() == "main",
+            )
         });
         if !is_bin_crate {
             return; // Do not create .pot for a library
@@ -115,15 +97,61 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for FakeLint {
         let pot = format!("{}/{}.pot", &dir, &*TEXTDOMAIN.read().unwrap());
         let pot_path = Path::new(&pot);
         if !pot_path.exists() {
-            let mut file = File::create(&pot_path).unwrap();
-            file.write(POT_DEFAULT.as_bytes()).unwrap();
+            create_default_pot_file(&pot_path).unwrap();
         }
-        let date = chrono::Local::now().format("%F %R%z").to_string();
-        // TODO: Parse and update .pot file
+        let mut pot_file = File::open(&pot_path).unwrap();
+        let mut pot_contents = String::new();
+        pot_file.read_to_string(&mut pot_contents).unwrap();
+        let pot = po::parse(&pot_contents).unwrap();
+        println!("{:?}", pot);
 
         println!("textdomain: {}", &*TEXTDOMAIN.read().unwrap());
-        println!("result: {:?}", POT.read().unwrap());
+        println!("result: {:?}", POT_BUF.read().unwrap());
     }
+}
+
+fn create_default_pot_file(path: &Path) -> std::io::Result<()> {
+    let mut file = File::create(path)?;
+    let pkg_name = env::var("CARGO_PKG_NAME").unwrap();
+    let pkg_version = env::var("CARGO_PKG_VERSION").unwrap();
+    let homepage = env::var("CARGO_PKG_HOMEPAGE").unwrap();
+    let authors = env::var("CARGO_PKG_AUTHORS").unwrap();
+    let authors = authors.split(":");
+    let year = chrono::Local::now().year();
+    let date = chrono::Local::now().format("%F %R%z").to_string();
+
+    writeln!(
+        &mut file,
+        "# This file is distributed under the same license as the {} package.",
+        pkg_name
+    )?;
+    for author in authors {
+        writeln!(&mut file, "# {}, {}.", author, year)?;
+    }
+    writeln!(&mut file, "#")?;
+    writeln!(&mut file, "#, fuzzy")?;
+    writeln!(&mut file, r#"msgid """#)?;
+    writeln!(&mut file, r#"msgstr """#)?;
+    writeln!(
+        &mut file,
+        r#""Project-Id-Version: {} {}\n""#,
+        pkg_name,
+        pkg_version
+    )?;
+    writeln!(&mut file, r#""Report-Msgid-Bugs-To: {}\n""#, homepage)?;
+    writeln!(&mut file, r#""POT-Creation-Date: {}\n""#, date)?;
+    writeln!(&mut file, r#""PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n""#)?;
+    writeln!(
+        &mut file,
+        r#""Last-Translator: FULL NAME <EMAIL@ADDRESS>\n""#
+    )?;
+    writeln!(&mut file, r#""Language-Team: LANGUAGE <LL@li.org>\n""#)?;
+    writeln!(&mut file, r#""Language: \n""#)?;
+    writeln!(&mut file, r#""MIME-Version: 1.0\n""#)?;
+    writeln!(&mut file, r#""Content-Type: text/plain; charset=UTF-8\n""#)?;
+    writeln!(&mut file, r#""Content-Transfer-Encoding: 8bit\n""#)?;
+
+    Ok(())
 }
 
 fn expand_g(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree]) -> Box<MacResult + 'static> {
@@ -305,7 +333,7 @@ fn parse<'a>(
         msgid_plural: msgid_plural.clone(),
         msgstr: BTreeMap::new(),
     };
-    POT.write().unwrap().push(msg);
+    POT_BUF.write().unwrap().push(msg);
     println!(
         "{}: {:?}",
         fl.file.name,
