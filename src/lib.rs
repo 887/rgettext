@@ -103,10 +103,12 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for FakeLint {
         let mut pot_contents = String::new();
         pot_file.read_to_string(&mut pot_contents).unwrap();
         let pot = po::parse(&pot_contents).unwrap();
-        println!("{:?}", pot);
+        let new_pot = merge_pot_buf(&mut POT_BUF.write().unwrap());
+        let pot = po::merge_po(pot, new_pot);
+        let mut pot_file = File::create(&pot_path).unwrap();
+        pot_file.write_all(po::to_string(pot).as_bytes()).unwrap();
 
-        println!("textdomain: {}", &*TEXTDOMAIN.read().unwrap());
-        println!("result: {:?}", POT_BUF.read().unwrap());
+        // TODO: merge all language .po
     }
 }
 
@@ -152,6 +154,38 @@ fn create_default_pot_file(path: &Path) -> std::io::Result<()> {
     writeln!(&mut file, r#""Content-Transfer-Encoding: 8bit\n""#)?;
 
     Ok(())
+}
+
+#[allow(unused_variables)]
+fn merge_pot_buf(buf: &mut Vec<po::Msg>) -> po::Po {
+    let mut result = po::Po::new();
+    while let Some(po::Msg {
+                       translator_comments,
+                       extracted_comments,
+                       reference,
+                       flag,
+                       previous,
+                       msgctxt,
+                       msgid,
+                       msgid_plural,
+                       msgstr,
+                   }) = buf.pop()
+    {
+        let id = po::MsgIdentifer(msgid.clone(), msgctxt.clone());
+        let msg = result.entry(id).or_insert_with(po::Msg::default);
+        msg.msgid = msgid;
+        msg.msgctxt = msgctxt;
+        msg.translator_comments.extend(translator_comments);
+        msg.extracted_comments.extend(extracted_comments);
+        msg.reference.extend(reference);
+        msg.flag.extend(flag);
+        msg.previous.extend(previous);
+        if let Some(v) = msgid_plural {
+            msg.msgid_plural.get_or_insert(v);
+        }
+        msg.msgstr.insert(0, "".into());
+    }
+    result
 }
 
 fn expand_g(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree]) -> Box<MacResult + 'static> {

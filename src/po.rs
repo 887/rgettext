@@ -1,12 +1,21 @@
 use std::collections::BTreeMap;
 use std::mem;
+use std::fmt;
 
 use nom::{digit, space};
 
-#[derive(Debug, Default)]
+pub type Po = BTreeMap<MsgIdentifer, Msg>;
+
+#[derive(Debug, Default, Clone)]
 pub struct Reference {
     pub file: String,
     pub line: usize,
+}
+
+impl fmt::Display for Reference {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{}:{}", self.file, self.line)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -21,6 +30,15 @@ pub struct Msg {
     pub msgid_plural: Option<String>,
     pub msgstr: BTreeMap<usize, String>,
 }
+
+impl Msg {
+    pub fn id(&self) -> MsgIdentifer {
+        MsgIdentifer(self.msgid.clone(), self.msgctxt.clone())
+    }
+}
+
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone)]
+pub struct MsgIdentifer(pub String, pub Option<String>);
 
 named!(index<usize>, map_res!(
     map_res!(
@@ -58,8 +76,8 @@ named!(msgid_plural<MsgType>, do_parse!(tag!("msgid_plural") >> (MsgType::MsgidP
 
 named!(parse_msg_type<MsgType>, alt!(msgstr | msgctxt | msgid | msgid_plural));
 
-pub fn parse(s: &str) -> Result<BTreeMap<String, Msg>, ParseError> {
-    let mut result = BTreeMap::new();
+pub fn parse(s: &str) -> Result<Po, ParseError> {
+    let mut result = Po::new();
     let mut tmp = Msg::default();
     let mut tmp_is_complete = false;
     let mut multi_line: Option<MsgType> = None;
@@ -75,8 +93,7 @@ pub fn parse(s: &str) -> Result<BTreeMap<String, Msg>, ParseError> {
             had_msgid = false;
             let mut msg = Msg::default();
             mem::swap(&mut msg, &mut tmp);
-            let id = msg.msgid.clone();
-            result.insert(id, msg);
+            result.insert(msg.id(), msg);
             continue;
         }
 
@@ -113,9 +130,10 @@ pub fn parse(s: &str) -> Result<BTreeMap<String, Msg>, ParseError> {
         }
         if line.starts_with('"') && line.ends_with('"') && multi_line.is_some() {
             use self::MsgType::*;
-            let s = parse_string(line.as_bytes())
-                .to_result()
-                .map_err(|e|{println!("{:?}", e); ParseError::new("illegal string", n)})?;
+            let s = parse_string(line.as_bytes()).to_result().map_err(|e| {
+                println!("{:?}", e);
+                ParseError::new("illegal string", n)
+            })?;
             match multi_line.unwrap() {
                 Msgctxt => tmp.msgctxt.as_mut().unwrap().push_str(&s),
                 Msgid => tmp.msgid.push_str(&s),
@@ -125,7 +143,7 @@ pub fn parse(s: &str) -> Result<BTreeMap<String, Msg>, ParseError> {
             continue;
         }
         if let Some(MsgType::Msgid) = multi_line {
-            if result.contains_key(&tmp.msgid) {
+            if result.contains_key(&tmp.id()) {
                 let e = ParseError::new(format!("duplicate msgid `{}`", tmp.msgid), n - 1);
                 return Err(e);
             }
@@ -138,12 +156,12 @@ pub fn parse(s: &str) -> Result<BTreeMap<String, Msg>, ParseError> {
                 return Err(e);
             }
             let (next, t) = r.unwrap();
-            let s = parse_string(next)
-                .to_result()
-                .map_err(|_| ParseError::new("illegal string", n))?;
+            let s = parse_string(next).to_result().map_err(|_| {
+                ParseError::new("illegal string", n)
+            })?;
             match t {
                 Msgctxt => {
-                    if !tmp.msgctxt.is_none() {
+                    if tmp.msgctxt.is_some() {
                         return t.to_duplicate_err(n);
                     }
                     tmp.msgctxt = Some(s);
@@ -158,7 +176,7 @@ pub fn parse(s: &str) -> Result<BTreeMap<String, Msg>, ParseError> {
                     multi_line = Some(t);
                 }
                 MsgidPlural => {
-                    if !tmp.msgid_plural.is_none() {
+                    if tmp.msgid_plural.is_some() {
                         return t.to_duplicate_err(n);
                     }
                     tmp.msgid_plural = Some(s);
@@ -180,6 +198,7 @@ pub fn parse(s: &str) -> Result<BTreeMap<String, Msg>, ParseError> {
         let e = ParseError::new("illegal line", n);
         return Err(e);
     }
+    println!("{:?}",result);
     Ok(result)
 }
 
@@ -194,9 +213,9 @@ fn parse_reference(s: &str) -> Result<Vec<Reference>, &'static str> {
                 return Err("illegal reference");
             }
             let file = file.unwrap().to_string();
-            let line = line.unwrap()
-                .parse()
-                .map_err(move |_| "illegal line number of reference")?;
+            let line = line.unwrap().parse().map_err(
+                move |_| "illegal line number of reference",
+            )?;
             Ok(Reference { file, line })
         })
         .collect()
@@ -216,8 +235,8 @@ impl MsgType {
     }
 }
 
-impl ::std::fmt::Display for MsgType {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> Result<(), ::std::fmt::Error> {
+impl fmt::Display for MsgType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         use self::MsgType::*;
         match *self {
             Msgctxt => write!(f, "msgctxt"),
@@ -240,5 +259,173 @@ impl ParseError {
             error: error.into(),
             line: line,
         }
+    }
+}
+
+#[allow(unused_variables)]
+pub fn merge_po(mut old: Po, mut new: Po) -> Po {
+    for (id, msg) in new.iter_mut() {
+        if let Some(Msg {
+                        translator_comments,
+                        extracted_comments,
+                        reference,
+                        flag,
+                        previous,
+                        msgctxt,
+                        msgid,
+                        msgid_plural,
+                        mut msgstr,
+                    }) = old.remove(&id)
+        {
+            msg.translator_comments.extend(translator_comments);
+            msg.flag.extend(flag);
+            if msg.msgid_plural.is_some() {
+                msg.msgstr.extend(msgstr);
+            } else {
+                msg.msgstr.insert(0, msgstr.remove(&0).unwrap());
+            }
+        }
+    }
+    new
+}
+
+pub fn to_string(po: Po) -> String {
+    use std::fmt::Write;
+    let mut result = String::new();
+    for Msg {
+        translator_comments,
+        extracted_comments,
+        reference,
+        flag,
+        previous,
+        msgctxt,
+        msgid,
+        msgid_plural,
+        mut msgstr,
+    } in po.into_iter().map(|v| v.1)
+    {
+        for line in translator_comments {
+            writeln!(&mut result, "# {}", line).unwrap();
+        }
+        for line in extracted_comments {
+            writeln!(&mut result, "#. {}", line).unwrap();
+        }
+        write_comment_with_limit(&mut result, "#:", " ", 80, &reference).unwrap();
+        write_comment_with_limit(&mut result, "#,", ",", 80, &flag).unwrap();
+        for line in previous {
+            writeln!(&mut result, "#| {}", line).unwrap();
+        }
+        if let Some(v) = msgctxt {
+            writeln!(&mut result, "msgctxt {}", v).unwrap();
+        }
+        write_string_with_limit(&mut result, "msgid", 80, msgid).unwrap();
+        if let Some(v) = msgid_plural {
+            write_string_with_limit(&mut result, "msgid_plural", 80, v).unwrap();
+            for (i, s) in msgstr {
+                write_string_with_limit(&mut result, &format!("msgstr[{}]", i), 80, s).unwrap();
+            }
+        } else {
+            write_string_with_limit(&mut result, "msgstr", 80, msgstr.remove(&0).unwrap()).unwrap();
+        }
+    }
+    result
+}
+
+fn write_comment_with_limit<W: fmt::Write, T: ToString>(
+    dst: &mut W,
+    tag: &str,
+    separator: &str,
+    width_limit: usize,
+    lines: &[T],
+) -> Result<(), fmt::Error> {
+    if lines.is_empty() {
+        return Ok(());
+    }
+    let mut width = 0;
+    for line in lines {
+        let line = line.to_string();
+        let line_len = line.chars().count();
+        if width == 0 {
+            write!(dst, "{} {}", tag, line)?;
+            width += line_len;
+        } else if width + line_len <= width_limit {
+            write!(dst, "{}{}", separator, line)?;
+            width += line_len;
+        } else {
+            write!(dst, "\n{} {}",tag, line)?;
+            width = line_len;
+        }
+    }
+    write!(dst, "\n")
+}
+
+fn write_string_with_limit<W: fmt::Write>(
+    dst: &mut W,
+    keyword: &str,
+    width_limit: usize,
+    s: String,
+) -> Result<(), fmt::Error> {
+    write!(dst, "{} ", keyword)?;
+    if s.chars().count() > width_limit {
+        writeln!(dst, "\"\"")?;
+    }
+    let mut width = 0;
+    let mut buf = String::new();
+    dst.write_char('"')?;
+    for c in s.chars() {
+        match c {
+            '\n' => {
+                write!(dst, "{}\\n\"\n\"", buf)?;
+                buf.clear();
+                width = 0;
+            }
+            '\\' => buf.push_str(r#"\\"#),
+            '"' => buf.push_str(r#"\""#),
+            ' ' => {
+                let buf_width = buf.chars().count();
+                if width + buf_width > width_limit {
+                    if width == 0 {
+                        write!(dst, "{} \"\n\"", buf)?;
+                        width = 0;
+                    } else {
+                        write!(dst, "\"\n\"{} ", buf)?;
+                        width = buf_width;
+                    }
+                } else {
+                    write!(dst, "{} ", buf)?;
+                    width += buf_width + 1;
+                }
+                buf.clear();
+            }
+            c => buf.push(c),
+        }
+    }
+    writeln!(dst, "{}\"", buf)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_write_string_with_limit() {
+        let mut result = String::new();
+        let src = "blahblahblah blahblah\n\
+                   blah blah blah blah\n\
+                   blah\n\
+                   \"blah\""
+            .to_string();
+        write_string_with_limit(&mut result, "msgid", 10, src).unwrap();
+        let dst = r#"msgid ""
+"blahblahblah "
+"blahblah\n"
+"blah blah "
+"blah blah\n"
+"blah\n"
+"\"blah\""
+"#
+            .to_string();
+        assert_eq!(result, dst);
     }
 }
