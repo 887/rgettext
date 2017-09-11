@@ -178,12 +178,16 @@ fn merge_pot_buf(buf: &mut Vec<po::Msg>) -> po::Po {
         msg.translator_comments.extend(translator_comments);
         msg.extracted_comments.extend(extracted_comments);
         msg.reference.extend(reference);
-        msg.flag.extend(flag);
         msg.previous.extend(previous);
         if let Some(v) = msgid_plural {
             msg.msgid_plural.get_or_insert(v);
         }
-        msg.msgstr.insert(0, "".into());
+        if msg.flag.is_empty() {
+            msg.flag.push("fuzzy".into());
+        }
+        if msg.msgstr.is_empty() {
+            msg.msgstr.insert(0, "".into());
+        }
     }
     result
 }
@@ -360,7 +364,7 @@ fn parse<'a>(
         translator_comments: Vec::new(),
         extracted_comments: Vec::new(),
         reference: vec![refence],
-        flag: Vec::new(), // FIXME: fuzzy?
+        flag: Vec::new(),
         previous: Vec::new(),
         msgctxt: None,
         msgid: msgid.clone(),

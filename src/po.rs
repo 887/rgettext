@@ -311,7 +311,7 @@ pub fn to_string(po: Po) -> String {
             writeln!(&mut result, "#. {}", line).unwrap();
         }
         write_comment_with_limit(&mut result, "#:", " ", 80, &reference).unwrap();
-        write_comment_with_limit(&mut result, "#,", ",", 80, &flag).unwrap();
+        write_comment_with_limit(&mut result, "#,", ", ", 80, &flag).unwrap();
         for line in previous {
             writeln!(&mut result, "#| {}", line).unwrap();
         }
