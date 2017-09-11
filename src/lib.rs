@@ -162,7 +162,7 @@ fn merge_pot_buf(buf: &mut Vec<po::Msg>) -> po::Po {
     while let Some(po::Msg {
                        translator_comments,
                        extracted_comments,
-                       reference,
+                       mut reference,
                        flag,
                        previous,
                        msgctxt,
@@ -177,7 +177,7 @@ fn merge_pot_buf(buf: &mut Vec<po::Msg>) -> po::Po {
         msg.msgctxt = msgctxt;
         msg.translator_comments.extend(translator_comments);
         msg.extracted_comments.extend(extracted_comments);
-        msg.reference.extend(reference);
+        msg.reference.insert(0, reference.pop().unwrap());
         msg.previous.extend(previous);
         if let Some(v) = msgid_plural {
             msg.msgid_plural.get_or_insert(v);
