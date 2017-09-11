@@ -373,11 +373,6 @@ fn parse<'a>(
         msgstr: BTreeMap::new(),
     };
     POT_BUF.write().unwrap().push(msg);
-    println!(
-        "{}: {:?}",
-        fl.file.name,
-        fl.lines.first().unwrap().line_index
-    );
     Ok(GettextArgs {
         domain: domain,
         singular: msgid,

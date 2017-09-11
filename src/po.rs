@@ -74,7 +74,7 @@ named!(msgctxt<MsgType>, do_parse!(tag!("msgctxt") >> (MsgType::Msgctxt)));
 named!(msgid<MsgType>, do_parse!(tag!("msgid") >> (MsgType::Msgid)));
 named!(msgid_plural<MsgType>, do_parse!(tag!("msgid_plural") >> (MsgType::MsgidPlural)));
 
-named!(parse_msg_type<MsgType>, alt!(msgstr | msgctxt | msgid | msgid_plural));
+named!(parse_msg_type<MsgType>, alt!(msgstr | msgctxt | msgid_plural | msgid));
 
 pub fn parse(s: &str) -> Result<Po, ParseError> {
     let mut result = Po::new();
@@ -130,10 +130,12 @@ pub fn parse(s: &str) -> Result<Po, ParseError> {
         }
         if line.starts_with('"') && line.ends_with('"') && multi_line.is_some() {
             use self::MsgType::*;
-            let s = parse_string(line.as_bytes()).to_result().map_err(|e| {
-                println!("{:?}", e);
-                ParseError::new("illegal string", n)
-            })?;
+            let s = parse_string(line.as_bytes()).to_full_result().map_err(
+                |e| {
+                    println!("{:?}", e);
+                    ParseError::new("illegal string", n)
+                },
+            )?;
             match multi_line.unwrap() {
                 Msgctxt => tmp.msgctxt.as_mut().unwrap().push_str(&s),
                 Msgid => tmp.msgid.push_str(&s),
@@ -156,7 +158,7 @@ pub fn parse(s: &str) -> Result<Po, ParseError> {
                 return Err(e);
             }
             let (next, t) = r.unwrap();
-            let s = parse_string(next).to_result().map_err(|_| {
+            let s = parse_string(next).to_full_result().map_err(|_| {
                 ParseError::new("illegal string", n)
             })?;
             match t {
@@ -198,7 +200,9 @@ pub fn parse(s: &str) -> Result<Po, ParseError> {
         let e = ParseError::new("illegal line", n);
         return Err(e);
     }
-    println!("{:?}",result);
+    if tmp_is_complete {
+        result.insert(tmp.id(), tmp);
+    }
     Ok(result)
 }
 
@@ -327,6 +331,7 @@ pub fn to_string(po: Po) -> String {
         } else {
             write_string_with_limit(&mut result, "msgstr", 80, msgstr.remove(&0).unwrap()).unwrap();
         }
+        result.push('\n');
     }
     result
 }
@@ -440,8 +445,20 @@ msgstr "str"
         let mut msg = Msg::default();
         msg.msgid = "id".into();
         msg.msgstr.insert(0, "str".into());
+        msg.reference.push(Reference {
+            file: "file.rs".into(),
+            line: 1,
+        });
         dst.insert(msg.id(), msg);
 
         assert_eq!(res, dst);
+    }
+
+    #[test]
+    fn test_parse_string() {
+        let r = parse_string(b"\"\"").to_full_result().unwrap();
+        assert_eq!(r, "".to_string());
+        let r = parse_string(b"\"two\"").to_full_result().unwrap();
+        assert_eq!(r, "two".to_string());
     }
 }
