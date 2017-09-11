@@ -37,6 +37,22 @@ impl Msg {
     }
 }
 
+impl Clone for Msg {
+    fn clone(&self) -> Self {
+        Msg {
+            translator_comments: self.translator_comments.clone(),
+            extracted_comments: self.extracted_comments.clone(),
+            reference: self.reference.clone(),
+            flag: self.flag.clone(),
+            previous: self.previous.clone(),
+            msgctxt: self.msgctxt.clone(),
+            msgid: self.msgid.clone(),
+            msgid_plural: self.msgid_plural.clone(),
+            msgstr: self.msgstr.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone)]
 pub struct MsgIdentifer(pub String, pub Option<String>);
 
@@ -266,49 +282,40 @@ impl ParseError {
     }
 }
 
-#[allow(unused_variables)]
-pub fn merge_po(mut old: Po, mut new: Po) -> Po {
-    for (id, msg) in new.iter_mut() {
-        if let Some(Msg {
-                        translator_comments,
-                        extracted_comments,
-                        reference,
-                        flag,
-                        previous,
-                        msgctxt,
-                        msgid,
-                        msgid_plural,
-                        mut msgstr,
-                    }) = old.remove(&id)
-        {
-            msg.translator_comments.extend(translator_comments);
+pub fn merge_po(mut old: Po, new: &Po) -> Po {
+    let mut result = Po::new();
+    for (id, new) in new.iter() {
+        let msg = result.entry(id.clone()).or_insert_with(|| new.clone());
+        if let Some(old) = old.remove(&id) {
+            msg.translator_comments = old.translator_comments;
             if msg.msgid_plural.is_some() {
-                msg.msgstr.extend(msgstr);
+                msg.msgstr.extend(old.msgstr);
             } else {
-                msg.msgstr.insert(0, msgstr.remove(&0).unwrap());
+                msg.msgstr.insert(0, old.msgstr.get(&0).unwrap().clone());
             }
         }
     }
-    if let Some(metadata) = old.remove(&MsgIdentifer("".into(), None)) {
-        new.insert(metadata.id(), metadata);
+    let metadata_id = MsgIdentifer("".into(), None);
+    if let Some(metadata) = old.remove(&metadata_id) {
+        result.insert(metadata_id, metadata);
     }
-    new
+    result
 }
 
-pub fn to_string(po: Po) -> String {
+pub fn to_string(po: &Po) -> String {
     use std::fmt::Write;
     let mut result = String::new();
-    for Msg {
-        translator_comments,
-        extracted_comments,
-        reference,
-        flag,
-        previous,
-        msgctxt,
-        msgid,
-        msgid_plural,
-        mut msgstr,
-    } in po.into_iter().map(|v| v.1)
+    for &Msg {
+        ref translator_comments,
+        ref extracted_comments,
+        ref reference,
+        ref flag,
+        ref previous,
+        ref msgctxt,
+        ref msgid,
+        ref msgid_plural,
+        ref msgstr,
+    } in po.iter().map(|v| v.1)
     {
         for line in translator_comments {
             if line.is_empty() {
@@ -324,29 +331,38 @@ pub fn to_string(po: Po) -> String {
                 writeln!(&mut result, "#. {}", line).unwrap();
             }
         }
-        write_comment_with_limit(&mut result, "#:", " ", 80, &reference).unwrap();
-        write_comment_with_limit(&mut result, "#,", ", ", 80, &flag).unwrap();
+        write_comment_with_limit(
+            &mut result,
+            "#:",
+            " ",
+            80,
+            &reference
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+        ).unwrap();
+        write_comment_with_limit(&mut result, "#,", ", ", 80, flag).unwrap();
         for line in previous {
             writeln!(&mut result, "#| {}", line).unwrap();
         }
-        if let Some(v) = msgctxt {
+        if let &Some(ref v) = msgctxt {
             writeln!(&mut result, "msgctxt {}", v).unwrap();
         }
         write_string_with_limit(&mut result, "msgid", 80, msgid).unwrap();
-        if let Some(v) = msgid_plural {
+        if let &Some(ref v) = msgid_plural {
             write_string_with_limit(&mut result, "msgid_plural", 80, v).unwrap();
             for (i, s) in msgstr {
                 write_string_with_limit(&mut result, &format!("msgstr[{}]", i), 80, s).unwrap();
             }
         } else {
-            write_string_with_limit(&mut result, "msgstr", 80, msgstr.remove(&0).unwrap()).unwrap();
+            write_string_with_limit(&mut result, "msgstr", 80, msgstr.get(&0).unwrap()).unwrap();
         }
         result.push('\n');
     }
     result
 }
 
-fn write_comment_with_limit<W: fmt::Write, T: ToString>(
+fn write_comment_with_limit<W: fmt::Write, T: AsRef<str>>(
     dst: &mut W,
     tag: &str,
     separator: &str,
@@ -358,7 +374,7 @@ fn write_comment_with_limit<W: fmt::Write, T: ToString>(
     }
     let mut width = 0;
     for comment in data {
-        let comment = comment.to_string();
+        let comment = comment.as_ref();
         let comment_width = comment.chars().count();
         if width == 0 {
             write!(dst, "{} {}", tag, comment)?;
@@ -378,7 +394,7 @@ fn write_string_with_limit<W: fmt::Write>(
     dst: &mut W,
     keyword: &str,
     width_limit: usize,
-    s: String,
+    s: &str,
 ) -> Result<(), fmt::Error> {
     write!(dst, "{} ", keyword)?;
     if s.chars().count() > width_limit {
@@ -431,7 +447,7 @@ mod test {
                    blah\n\
                    \"blah\""
             .to_string();
-        write_string_with_limit(&mut result, "msgid", 10, src).unwrap();
+        write_string_with_limit(&mut result, "msgid", 10, &src).unwrap();
         let dst = r#"msgid ""
 "blahblahblah "
 "blahblah\n"

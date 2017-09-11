@@ -16,7 +16,8 @@ extern crate chrono;
 extern crate nom;
 
 use std::sync::RwLock;
-use std::fs::{create_dir, File};
+use std::fs;
+use std::fs::File;
 use std::path::Path;
 use std::env;
 use std::io::prelude::*;
@@ -92,7 +93,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for FakeLint {
         }
         let dir = format!("{}/{}", env::var("CARGO_MANIFEST_DIR").unwrap(), "i18n");
         if !Path::new(&dir).exists() {
-            create_dir(&dir).unwrap();
+            fs::create_dir(&dir).unwrap();
         }
         let pot = format!("{}/{}.pot", &dir, &*TEXTDOMAIN.read().unwrap());
         let pot_path = Path::new(&pot);
@@ -104,11 +105,29 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for FakeLint {
         pot_file.read_to_string(&mut pot_contents).unwrap();
         let pot = po::parse(&pot_contents).unwrap();
         let new_pot = merge_pot_buf(&mut POT_BUF.write().unwrap());
-        let pot = po::merge_po(pot, new_pot);
+        let pot = po::merge_po(pot, &new_pot);
         let mut pot_file = File::create(&pot_path).unwrap();
-        pot_file.write_all(po::to_string(pot).as_bytes()).unwrap();
+        pot_file.write_all(po::to_string(&pot).as_bytes()).unwrap();
 
-        // TODO: merge all language .po
+        let po_dir = format!("{}/{}", dir, "po");
+        if !Path::new(&po_dir).exists() {
+            fs::create_dir(&po_dir).unwrap();
+        }
+        for entry in fs::read_dir(po_dir).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_type().unwrap().is_file() {
+                let po_path = entry.path();
+                let po_path = po_path.as_path();
+                println!("{:?}", po_path);
+                let mut po_file = File::open(po_path).unwrap();
+                let mut po_contents = String::new();
+                po_file.read_to_string(&mut po_contents).unwrap();
+                let po = po::parse(&po_contents).unwrap();
+                let po = po::merge_po(po, &pot);
+                let mut po_file = File::create(&po_path).unwrap();
+                po_file.write_all(po::to_string(&po).as_bytes()).unwrap();
+            }
+        }
     }
 }
 
