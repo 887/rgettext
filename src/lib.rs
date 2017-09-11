@@ -360,7 +360,7 @@ fn parse<'a>(
         translator_comments: Vec::new(),
         extracted_comments: Vec::new(),
         reference: vec![refence],
-        flag: Vec::new(),
+        flag: Vec::new(), // FIXME: fuzzy?
         previous: Vec::new(),
         msgctxt: None,
         msgid: msgid.clone(),

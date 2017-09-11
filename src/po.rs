@@ -6,7 +6,7 @@ use nom::{digit, space};
 
 pub type Po = BTreeMap<MsgIdentifer, Msg>;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Reference {
     pub file: String,
     pub line: usize,
@@ -18,7 +18,7 @@ impl fmt::Display for Reference {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Eq, PartialEq)]
 pub struct Msg {
     pub translator_comments: Vec<String>, // #
     pub extracted_comments: Vec<String>, // #.
@@ -427,5 +427,21 @@ mod test {
 "#
             .to_string();
         assert_eq!(result, dst);
+    }
+
+    #[test]
+    fn test_parse() {
+        let src = r#"#: file.rs:1
+msgid "id"
+msgstr "str"
+"#;
+        let res = parse(src).unwrap();
+        let mut dst = Po::new();
+        let mut msg = Msg::default();
+        msg.msgid = "id".into();
+        msg.msgstr.insert(0, "str".into());
+        dst.insert(msg.id(), msg);
+
+        assert_eq!(res, dst);
     }
 }
