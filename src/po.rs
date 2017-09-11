@@ -49,7 +49,7 @@ named!(index<usize>, map_res!(
 ));
 
 named!(esc<String>, map_res!(
-    escaped_transform!(alt!(tag!("\\\"") | is_not!("\"")), '\\',
+    escaped_transform!(take_until_either!("\"\\"), '\\',
                        alt!(
                            tag!("\\")   => { |_| &b"\\"[..] }
                            | tag!("\"") => { |_| &b"\""[..] }
@@ -101,24 +101,24 @@ pub fn parse(s: &str) -> Result<Po, ParseError> {
             multi_line = None;
             match line.split_whitespace().next().unwrap() {
                 "#" => {
-                    let v = line.trim_left_matches("# ").to_owned();
+                    let v = line.split_at(1).1.trim().to_owned();
                     tmp.translator_comments.push(v)
                 }
                 "#." => {
-                    let v = line.trim_left_matches("#. ").to_owned();
+                    let v = line.split_at(2).1.trim().to_owned();
                     tmp.extracted_comments.push(v)
                 }
                 "#:" => {
-                    let s = line.trim_left_matches("#: ").to_owned();
+                    let s = line.split_at(2).1.trim().to_owned();
                     let mut v = parse_reference(&s).map_err(|e| ParseError::new(e, n))?;
                     tmp.reference.append(&mut v)
                 }
                 "#," => {
-                    let v = line.trim_left_matches("#, ").to_owned();
+                    let v = line.split_at(2).1.trim().to_owned();
                     tmp.flag.push(v)
                 }
                 "#|" => {
-                    let v = line.trim_left_matches("#| ").to_owned();
+                    let v = line.split_at(2).1.trim().to_owned();
                     tmp.previous.push(v)
                 }
                 x => {
@@ -282,13 +282,15 @@ pub fn merge_po(mut old: Po, mut new: Po) -> Po {
                     }) = old.remove(&id)
         {
             msg.translator_comments.extend(translator_comments);
-            msg.flag.extend(flag);
             if msg.msgid_plural.is_some() {
                 msg.msgstr.extend(msgstr);
             } else {
                 msg.msgstr.insert(0, msgstr.remove(&0).unwrap());
             }
         }
+    }
+    if let Some(metadata) = old.remove(&MsgIdentifer("".into(), None)) {
+        new.insert(metadata.id(), metadata);
     }
     new
 }
@@ -309,10 +311,18 @@ pub fn to_string(po: Po) -> String {
     } in po.into_iter().map(|v| v.1)
     {
         for line in translator_comments {
-            writeln!(&mut result, "# {}", line).unwrap();
+            if line.is_empty() {
+                writeln!(&mut result, "#").unwrap();
+            } else {
+                writeln!(&mut result, "# {}", line).unwrap();
+            }
         }
         for line in extracted_comments {
-            writeln!(&mut result, "#. {}", line).unwrap();
+            if line.is_empty() {
+                writeln!(&mut result, "#.").unwrap();
+            } else {
+                writeln!(&mut result, "#. {}", line).unwrap();
+            }
         }
         write_comment_with_limit(&mut result, "#:", " ", 80, &reference).unwrap();
         write_comment_with_limit(&mut result, "#,", ", ", 80, &flag).unwrap();
@@ -341,24 +351,24 @@ fn write_comment_with_limit<W: fmt::Write, T: ToString>(
     tag: &str,
     separator: &str,
     width_limit: usize,
-    lines: &[T],
+    data: &[T],
 ) -> Result<(), fmt::Error> {
-    if lines.is_empty() {
+    if data.is_empty() {
         return Ok(());
     }
     let mut width = 0;
-    for line in lines {
-        let line = line.to_string();
-        let line_len = line.chars().count();
+    for comment in data {
+        let comment = comment.to_string();
+        let comment_width = comment.chars().count();
         if width == 0 {
-            write!(dst, "{} {}", tag, line)?;
-            width += line_len;
-        } else if width + line_len <= width_limit {
-            write!(dst, "{}{}", separator, line)?;
-            width += line_len;
+            write!(dst, "{} {}", tag, comment)?;
+            width += comment_width;
+        } else if width + comment_width <= width_limit {
+            write!(dst, "{}{}", separator, comment)?;
+            width += comment_width;
         } else {
-            write!(dst, "\n{} {}",tag, line)?;
-            width = line_len;
+            write!(dst, "\n{} {}",tag, comment)?;
+            width = comment_width;
         }
     }
     write!(dst, "\n")
@@ -458,7 +468,11 @@ msgstr "str"
     fn test_parse_string() {
         let r = parse_string(b"\"\"").to_full_result().unwrap();
         assert_eq!(r, "".to_string());
-        let r = parse_string(b"\"two\"").to_full_result().unwrap();
-        assert_eq!(r, "two".to_string());
+    }
+
+    #[test]
+    fn test_parse_esc() {
+        let r = esc(r#"😺\n"#.as_bytes()).to_full_result().unwrap();
+        assert_eq!(r, "😺\n".to_string());
     }
 }
