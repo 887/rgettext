@@ -159,10 +159,11 @@ fn create_default_pot_file(path: &Path) -> std::io::Result<()> {
 #[allow(unused_variables)]
 fn merge_pot_buf(buf: &mut Vec<po::Msg>) -> po::Po {
     let mut result = po::Po::new();
+    buf.reverse(); // fix pop order
     while let Some(po::Msg {
                        translator_comments,
                        extracted_comments,
-                       mut reference,
+                       reference,
                        flag,
                        previous,
                        msgctxt,
@@ -177,7 +178,7 @@ fn merge_pot_buf(buf: &mut Vec<po::Msg>) -> po::Po {
         msg.msgctxt = msgctxt;
         msg.translator_comments.extend(translator_comments);
         msg.extracted_comments.extend(extracted_comments);
-        msg.reference.insert(0, reference.pop().unwrap());
+        msg.reference.extend(reference);
         msg.previous.extend(previous);
         if let Some(v) = msgid_plural {
             msg.msgid_plural.get_or_insert(v);
